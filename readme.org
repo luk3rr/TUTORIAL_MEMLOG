@@ -1,0 +1,186 @@
+* Memlog
+Hi buddy,
+
+Como não sei exatamente qual é a sua dúvida sobre o memlog e, pelo que vi do seu código, você não começou a instrumentá-lo ainda, vou tentar fazer um tutorial geral sobre como utilizar essa lib (não tão user friendly :') ).
+
+* Etapa 1 - Arquivos necessários
+Você deve conter tanto o arquivo memlog.h quanto o memlog.c no seu projeto. Provavelmente o professor disponibilizou estes arquivos para você, mas de qualquer forma deixarei os que utilizei quando fiz ED (2023-1) neste repositório.
+
+* Etapa 2 - Iniciando o memlog
+Você deve incluir o arquivo memlog.h no arquivo onde a sua função main está definida, normalmente (se você for um bom garoto) ela vai estar definida no arquivo main.{c, cpp, cc}. Para tentar facilitar o seu entendimento, vou utilizar parte do código do meu primeiro TP de ED, que era um resolver de expressão numérica (bem semelhante ao TP de expressão lógica e satisfatibilidade).
+
+Indo direto ao ponto, veja a função main abaixo. Sim, eu sei, você não entendeu nada. Tudo bem, a ideia é só você saber que precisa iniciar o memlog antes de rodar as funções do seu programa, e finalizá-lo após executar essas funções. Além disso, ao iniciar o memlog, você provavelmente gostaria de salvar os dados que ele vai coletar, então defina um arquivo qualquer. No exemplo abaixo, eu defino um arquivo =saida.out= que vai ser salvo no diretório =/tmp/=. 
+
+A função =iniciaMemLog= é a responsável por iniciar a captura dos eventos, e as duas funções =desativaMemLog= e =finalizaMemLog= finaliza a captura dos eventos e desativa o memlog (bem autoexplicativas).
+
+#+begin_src c++
+int main(int argc, char *argv[])
+{
+    std::string input;
+    ExpressionTreeCalculator calculator;
+    bool run = true;
+    bool expressionOn = false;
+
+    std::string saida = "/tmp/saida.out";
+    iniciaMemLog((char*)saida.c_str());
+
+    if (argc > 1 and std::string(argv[1]) == "--file")
+    {
+        while (std::getline(std::cin, input))
+        {
+            mainOptions(input, run, expressionOn, calculator);
+        }
+    }
+    else
+    {
+        while (run)
+        {
+            std::getline(std::cin, input);
+            mainOptions(input, run, expressionOn, calculator);
+        }
+    }
+
+    desativaMemLog();
+    finalizaMemLog();
+    return 0;
+}
+#+end_src
+
+Basicamente, no seu main é isso que você tem que fazer.
+
+Agora, você deve estar se perguntando "Okay, Lucas. Mas, como eu capturo os eventos?". É isso que veremos na etapa 3 :)
+
+* Etapa 3 - Capturando os eventos
+A captura dos eventos é feita por duas funções da lib memlog, a saber, =ESCREVEMEMLOG= e =LEMEMLOG=.
+
+** ESCREVEMEMLOG
+ESCREVEMEMLOG é utilizada quando você quer capturar a escrita de algum dado na memória, de uma determinada função.
+
+#+begin_src c++
+void ExpressionTreeCalculator::StoreExpression(std::string expression)
+{
+    if (Parser::InfixIsValid(expression))
+    {
+        expression = Converter::Infix2Postfix(expression);
+    }
+    else if (not Parser::PostfixIsValid(expression))
+    {
+        throw psrexcpt::InvalidExpression(expression);
+    }
+
+    this->m_expression.DeleteTree();
+
+    slkd::Stack<dlkd::Node<std::string>*> stack;
+    int numNodes = expression.Size();
+    std::string token;
+
+    std::istringstream iss(expression);
+
+    defineFaseMemLog(0);
+
+    while (iss >> token) {
+        if (Parser::IsNumber(token))
+        {
+            stack.Push(new dlkd::Node<std::string>(token));
+            ESCREVEMEMLOG((long int)(&(*stack.m_top)), sizeof(slkd::Node<std::string>), 0);
+        }
+        else if (Parser::IsValidOperator(token))
+        {
+            stack.push(new dlkd::Node<std::string>(token, stack.Pop(), stack.Pop()));
+            ESCREVEMEMLOG((long int)(&(*stack.m_top)), sizeof(slkd::Node<std::string>), 0);
+        }
+    }
+    this->m_expression.InsertExistingTree(stack.Pop(), numNodes);
+}
+#+end_src
+
+Contextualizando, a função acima é responsável por criar a minha árvore. Para isso, eu uso uma pilha. Todas vez que eu crio um novo nó e insiro na pilha, eu rastreio o =m_top=, que é um ponteiro para o elemento no topo da minha pilha (eu uso uma lista ligada).
+
+Okay, sabendo que eu quero que o memlog gere uma análise da minha pilha, o que eu devo fazer ?
+
+Primeiro, gere um ID para essa análise. Isso é feito com a função =defineFaseMemLog=. Isso serve para que na hora de plotar os dados, você saiba de qual análise aquele dado foi extraído. No exemplo acima, eu defino o ID $0$.
+
+Agora, toda vez que eu inserir um novo elemento na minha pilha, eu chamo a função ESCREVEMEMLOG, para que o memlog saiba que um novo dado foi armazenado na memória. Além disso, ele precisa saber 3 coisas:
+
+1. Onde o dado foi armazenado na memória
+2. Qual o tamanho do dado
+3. Qual o ID da análise que aquele dado vai ser considerado
+
+Destrinchando o comando abaixo:
+#+begin_src c++
+ESCREVEMEMLOG((long int)(&(*stack._top)), sizeof(slkd::Node<std::string>), 0);
+#+end_src
+
+- Digo ao memlog onde o dado está armazenado
+#+begin_src c++
+(long int)(&(*stack.m_top))
+#+end_src
+
+- Digo ao memlog qual o tamanho deste dado
+#+begin_src c++
+sizeof(slkd::Node<std::string>)
+#+end_src
+
+- Por fim, o último parâmetro da função, aquele zero feinho no fim, é o ID da análise. Sim, o mesmo que eu defino com a função =defineFaseMemLog=.
+** LEMEMLOG
+Semelhante ao ESCREVEMEMLOG, LEMEMLOG é utilizada para capturar eventos da memória, especificamente eventos de leitura.
+
+#+begin_src c++
+std::string Converter::Infix2Postfix(std::string str)
+{
+    // Essa função foi implementada a partir da ideia do algoritmo "Shunting Yard", proposto por Edsgar Dijkstra
+
+    slkd::Stack<std::string> simbols;
+    std::string token, output;
+    std::istringstream iss(str);
+
+    defineFaseMemLog(1);
+
+    while (iss >> token)
+    {
+        if (Parser::IsNumber(token))
+        {
+            Converter::Cmma2DotDecimalConverter(token);
+            output += token + " ";
+        }
+        else if (Parser::IsValidOperator(token))
+        {
+            try
+            {
+                // Enquanto a precedência do último operador lido na string for menor ou igual a precedência do operador
+                // no topo da pilha, mova este operador no topo para a fila output
+                while (Converter::Precedence(token) <= Converter::Precedence(simbols.Peek()))
+                    output += simbols.Pop() + " ";
+
+                simbols.Push(token);
+                LEMEMLOG((long int)(&(*simbols.m_top)), sizeof(slkd::Node<std::string>), 1);
+            }
+            catch (stkexcpt::StackIsEmpty &e)
+            {
+                simbols.Push(token);
+                LEMEMLOG((long int)(&(*simbols.m_top)), sizeof(slkd::Node<std::string>), 1);
+                continue;
+            }
+        }
+        else if (token == "(")
+        {
+            // O primeiro parenteses encontrado é enviado para a pilha de símbolos para sabermos quais são os limites das
+            // precedências
+            simbols.Push(token);
+            LEMEMLOG((long int)(&(*simbols.m_top)), sizeof(slkd::Node<std::string>), 1);
+            continue;
+        }
+...
+#+end_src
+
+Esse código acima é parte de uma função que eu fiz pra converter expressão em notação infixa para a notação posfixa. Por algum motivo eu instrumentei ela para capturar os acessos de leitura na memória (não me pergunte por quê, apenas o Lucas do passado sabe o motivo, provavelmente no dia eu só queria entregar a atividade e ir dormir :') ).
+
+A ideia é a mesma do explicado no ESCREVEMEMLOG. Você define o ID da análise com =defineFaseMemLog=, e começa a chamar a função =LEMEMLOG= sempre que quiser capturar um evento de leitura dizendo para ela onde está o dado que foi lido, qual o tamanho dele e qual o ID da análise na qual ele será registrado.
+
+* Plotagem dos gráficos
+Depois de instrumentar o seu código, você pode executar ele, passar umas entradas e finalizar o programa (finalizar normalmente, não mete um ALT+F4).
+
+Ele vai gerar aquele arquivo de saída que você definiu no seu main e a partir dele você pode plotar os seus gráficos e fazer a análise dos seus dados.
+
+* Considerações finais
+Como eu havia dito na monitoria, graças a deus nunca tive que utilizar o memlog depois de fazer ED. Não quero dizer que ele não seja útil, só é chato. Em geral, a análise do tempo de execução à medida que a entrada aumenta é bem mais simples de fazer.
